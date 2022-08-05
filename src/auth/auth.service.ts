@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from 'src/prisma/prisma.service';
+
 import { AuthDto } from './dto';
 import { Tokens } from './types';
 
@@ -23,8 +24,8 @@ export class AuthService {
         },
       });
 
-    const tokens = await this.getTokens(newUser.id, newUser.email);
-    await this.updateHash(newUser.id, tokens.refresh_token);
+    const tokens = await this.generateTokens(newUser.id, newUser.email);
+    await this.updateRefreshToken(newUser.id, tokens.refresh_token);
     return tokens;
   }
 
@@ -45,17 +46,52 @@ export class AuthService {
       return null;
     }
 
-    const tokens = await this.getTokens(user.id, user.email);
-    await this.updateHash(user.id, tokens.refresh_token);
+    const tokens = await this.generateTokens(user.id, user.email);
+    await this.updateRefreshToken(user.id, tokens.refresh_token);
     return tokens;
   }
 
-  logout() { }
+  async logout(userId: number) {
+    await this.prisma.user
+      .updateMany({
+        where: {
+          id: userId,
+          hashedRt: {
+            not: null,
+          },
+        },
+        data: {
+          hashedRt: null,
+        },
+      });
+  }
 
-  refresh() { }
+  async refresh(userId: number, refreshToken: string) {
+    const user = await this.prisma.user
+      .findUnique({
+        where: {
+          id: userId,
+        },
+      });
 
-  private async updateHash(userId: number, rt: string): Promise<void> {
-    const hash = await this.hashString(rt);
+    if (!user || user.hashedRt === null) {
+      return null;
+    }
+    const tokenSignature = refreshToken.split('.')[2];
+    const isTokenMatch = await bcrypt.compare(tokenSignature, user.hashedRt);
+    if (!isTokenMatch) {
+      return null;
+    }
+
+    const tokens = await this.generateTokens(user.id, user.email);
+    await this.updateRefreshToken(user.id, tokens.refresh_token);
+    return tokens;
+  }
+
+  private async updateRefreshToken(userId: number, rt: string): Promise<void> {
+    const tokenSignature = rt.split('.')[2];
+    const hash = await bcrypt.hash(tokenSignature, 10);
+    console.log({ rt, hash });
     await this.prisma.user
       .update({
         where: {
@@ -71,21 +107,21 @@ export class AuthService {
     return bcrypt.hash(data, 10);
   }
 
-  private async getTokens(userId: number, email: string): Promise<Tokens> {
+  private async generateTokens(userId: number, email: string): Promise<Tokens> {
     const [at, rt] = await Promise.all([
       this.jwtService.signAsync({
         sub: userId,
         email,
       }, {
         secret: 'at-secret',
-        expiresIn: 60 * 15,
+        expiresIn: '15m',
       }),
       this.jwtService.signAsync({
         sub: userId,
         email,
       }, {
         secret: 'rt-secret',
-        expiresIn: 60 * 60 * 24 * 7,
+        expiresIn: '7d',
       })
     ]);
 
