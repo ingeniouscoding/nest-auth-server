@@ -91,7 +91,6 @@ export class AuthService {
   private async updateRefreshToken(userId: number, rt: string): Promise<void> {
     const tokenSignature = rt.split('.')[2];
     const hash = await bcrypt.hash(tokenSignature, 10);
-    console.log({ rt, hash });
     await this.prisma.user
       .update({
         where: {
